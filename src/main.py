@@ -77,11 +77,12 @@ def main():
     # predictions
     predictions = predict(args, model, test_loader)
     test_data = pd.read_csv(os.path.join(args.data_path, "test.csv"))
-    ID = test_data["ID"]
+    ID = test_data["ID"].values
 
     pd.DataFrame({"ID": ID, "Class": predictions}).to_csv(
-        f"../submission/{args.parameter_dir}.csv"
+        f"submission/{args.parameter_dir}.csv"
     )
+    logging.info(f"All Finished")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ def load_data(data_path):
     y_valid = data_dict["valid"].Class.values
 
     test_data = pd.read_csv("data/test.csv")
-    x_test = test_data.iloc[:, 1:]
+    x_test = test_data.iloc[:, 1:].values
 
     return x_train, x_valid, y_valid, x_test
 

@@ -14,17 +14,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from sklearn.metrics import f1_score
+from sklearn.metrics.pairwise import cosine_similarity
 from utils import RunningAverage, set_logger, save_models
 
 
 def VAE_loss(x, x_hat, mean, log_var):
     mse = nn.MSELoss(reduction="mean")
     reproduction_loss = mse(x_hat, x)
-    mse_list = F.mse_loss(x_hat, x, reduction="none")
-    mse_list = torch.mean(mse_list, dim=1).cpu().detach().numpy()
     KLD = -0.5 * torch.sum(1 + log_var - mean.pow(2) - log_var.exp())
 
-    return reproduction_loss + KLD, mse_list
+    return reproduction_loss + KLD
 
 
 def train_epoch(args, model, device, dataloader, optimizer, accumulation_steps=1):
@@ -36,7 +35,6 @@ def train_epoch(args, model, device, dataloader, optimizer, accumulation_steps=1
         enumerate(dataloader), total=len(dataloader), desc="Train Epoch"
     ):
         batch["inputs"] = batch["inputs"].to(device)
-        # batch["inputs"] = batch["inputs"].view(batch, -1)
 
         # optimizer condition
         opt_cond = (idx + 1) % accumulation_steps == 0
@@ -44,7 +42,7 @@ def train_epoch(args, model, device, dataloader, optimizer, accumulation_steps=1
         optimizer.zero_grad()
 
         x_hat, mean, log_var = model(batch["inputs"])
-        loss, _ = VAE_loss(batch["inputs"], x_hat, mean, log_var)
+        loss = VAE_loss(batch["inputs"], x_hat, mean, log_var)
 
         loss.backward()
 
@@ -68,13 +66,17 @@ def validate_epoch(args, model, device, dataloader, labels, threshold=0.5):
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Valid Epoch"):
 
-            batch["inputs"] = batch["inputs"].to(device)
-            # batch["inputs"] = batch["inputs"].view(args.val_batch_size, -1)
+            x_hat, mean, log_var = model(batch["inputs"].to(device))
+            loss = VAE_loss(batch["inputs"].to(device), x_hat, mean, log_var)
 
-            x_hat, mean, log_var = model(batch["inputs"])
-            loss, loss_list = VAE_loss(batch["inputs"], x_hat, mean, log_var)
+            x = batch["inputs"].cpu().numpy()
+            x_hat = x_hat.cpu().numpy()
+            cos_list = [
+                cosine_similarity(i.reshape(1, -1), j.reshape(1, -1))[0][0]
+                for i, j in zip(x, x_hat)
+            ]
 
-            preds = [1 if l >= threshold else 0 for l in loss_list]
+            preds = [1 if l < threshold else 0 for l in cos_list]
             predictions.extend(preds)
             valid_loss.update(loss.item())
 
@@ -93,12 +95,15 @@ def predict(args, model, dataloader):
     model.eval()
     predictions = []
     with torch.no_grad():
-        for batch in dataloader:
-            batch = {k: v.to(args.device) for k, v in batch.items()}
-            batch["inputs"] = batch["inputs"].view(args.val_batch_size, -1)
-            x_hat, mean, log_var = model(batch["inputs"])
-            loss, loss_list = VAE_loss(batch["inputs"], x_hat, mean, log_var)
-            preds = [1 if l >= args.threshold else 0 for l in loss_list]
+        for batch in tqdm(dataloader, desc="Make a prediction"):
+            x_hat, mean, log_var = model(batch["inputs"].to(args.device))
+            x = batch["inputs"].cpu().numpy()
+            x_hat = x_hat.cpu().numpy()
+            cos_list = [
+                cosine_similarity(i.reshape(1, -1), j.reshape(1, -1))[0][0]
+                for i, j in zip(x, x_hat)
+            ]
+            preds = [1 if l < args.threshold else 0 for l in cos_list]
             predictions.extend(preds)
     torch.cuda.empty_cache()
 
